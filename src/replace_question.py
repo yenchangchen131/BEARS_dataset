@@ -58,7 +58,7 @@ TRANSLATION_PROMPT = """你是一位專業的英翻繁體中文翻譯專家。�
 
 翻譯要求：
 1. 保持原文的語意和語氣(如果是問句就保持問句、直述句就保持直述句)，不要自行修正原文的語詞、句型。
-2. 人名、地名等專有名詞使用台灣常見的翻譯方式，然後用括號標註原文
+2. 人名、地名、影視作品名等專有名詞使用台灣常見的翻譯方式，然後用括號標註原文
 3. 數字、日期格式保持原樣
 4. 如果原文已經是中文，直接返回原文
 5. 只返回翻譯結果，不要添加任何解釋或說明
@@ -170,17 +170,22 @@ def extract_drcd_candidate(
     }
 
 
-def extract_squad_candidate(
+def extract_squad_v2_candidate(
     data: list[dict], used_contexts: set[str], used_question_ids: set[str]
 ) -> dict | None:
-    """從 SQuAD 中提取一個新的 QA"""
-    # 過濾掉已使用的 context 和 question_id
+    """從 SQuAD v2 中提取一個新的 QA (過濾不可回答的問題)"""
     candidates = []
     for item in data:
+        # 過濾不可回答的問題
+        answers = item.get("answers", {})
+        answer_texts = answers.get("text", [])
+        if not answer_texts:
+            continue
+
         if item.get("context", "") in used_contexts:
             continue
         original_id = item.get("id", str(uuid.uuid4()))
-        question_id = generate_question_id("squad", original_id)
+        question_id = generate_question_id("squad_v2", original_id)
         if question_id in used_question_ids:
             continue
         candidates.append(item)
@@ -190,8 +195,8 @@ def extract_squad_candidate(
 
     selected = random.choice(candidates)
     original_id = selected.get("id", str(uuid.uuid4()))
-    doc_id = generate_doc_id("squad", original_id)
-    question_id = generate_question_id("squad", original_id)
+    doc_id = generate_doc_id("squad_v2", original_id)
+    question_id = generate_question_id("squad_v2", original_id)
 
     answers = selected.get("answers", {})
     answer_texts = answers.get("text", [])
@@ -211,7 +216,7 @@ def extract_squad_candidate(
             "question": translated_question,
             "gold_answer": translated_answer,
             "gold_doc_ids": [doc_id],
-            "source_dataset": "squad",
+            "source_dataset": "squad_v2",
             "question_type": "single-hop",
         },
         "query_raw": {
@@ -219,14 +224,14 @@ def extract_squad_candidate(
             "question": selected.get("question", ""),
             "gold_answer": answer_text,
             "gold_doc_ids": [doc_id],
-            "source_dataset": "squad",
+            "source_dataset": "squad_v2",
             "question_type": "single-hop",
         },
         "docs": [
             {
                 "doc_id": doc_id,
                 "content": translated_content,
-                "original_source": "squad",
+                "original_source": "squad_v2",
                 "original_id": original_id,
                 "is_gold": True,
             }
@@ -235,12 +240,121 @@ def extract_squad_candidate(
             {
                 "doc_id": doc_id,
                 "content": selected.get("context", ""),
-                "original_source": "squad",
+                "original_source": "squad_v2",
                 "original_id": original_id,
                 "is_gold": True,
             }
         ],
     }
+
+
+def extract_ms_marco_candidate(
+    data: list[dict], used_contexts: set[str], used_question_ids: set[str]
+) -> dict | None:
+    """從 MS MARCO 中提取一個新的 QA (含 hard negatives)"""
+    random.shuffle(data)
+
+    for item in data:
+        # 過濾無答案的 query
+        answers = item.get("answers", [])
+        if not answers or answers == ["No Answer Present."]:
+            continue
+
+        passages = item.get("passages", {})
+        is_selected_list = passages.get("is_selected", [])
+        passage_texts = passages.get("passage_text", [])
+
+        # 確保至少有一個被選中的段落
+        if 1 not in is_selected_list:
+            continue
+
+        original_id = str(item.get("query_id", uuid.uuid4()))
+        question_id = generate_question_id("ms_marco", original_id)
+
+        if question_id in used_question_ids:
+            continue
+
+        # 檢查是否有 context 已被使用
+        all_passages = [t for t in passage_texts if t and t.strip()]
+        if any(p in used_contexts for p in all_passages):
+            continue
+
+        # 提取文檔
+        docs = []
+        docs_raw = []
+        gold_doc_ids = []
+
+        for i, (selected, text) in enumerate(
+            zip(is_selected_list, passage_texts)
+        ):
+            if not text or not text.strip():
+                continue
+
+            doc_original_id = f"{original_id}_p{i}"
+            doc_id = generate_doc_id("ms_marco", doc_original_id)
+            is_gold = selected == 1
+
+            if is_gold:
+                print(f"  翻譯黃金文檔 p{i}...")
+            else:
+                print(f"  翻譯困難負樣本 p{i}...")
+            translated_content = translate_text(text)
+
+            docs.append(
+                {
+                    "doc_id": doc_id,
+                    "content": translated_content,
+                    "original_source": "ms_marco",
+                    "original_id": doc_original_id,
+                    "is_gold": is_gold,
+                }
+            )
+            docs_raw.append(
+                {
+                    "doc_id": doc_id,
+                    "content": text,
+                    "original_source": "ms_marco",
+                    "original_id": doc_original_id,
+                    "is_gold": is_gold,
+                }
+            )
+
+            if is_gold:
+                gold_doc_ids.append(doc_id)
+
+        if not gold_doc_ids:
+            continue
+
+        answer_text = answers[0] if answers else ""
+
+        # 翻譯問題與答案
+        print("  翻譯問題...")
+        translated_question = translate_text(item.get("query", ""))
+        print("  翻譯答案...")
+        translated_answer = translate_text(answer_text)
+
+        return {
+            "query": {
+                "question_id": question_id,
+                "question": translated_question,
+                "gold_answer": translated_answer,
+                "gold_doc_ids": gold_doc_ids,
+                "source_dataset": "ms_marco",
+                "question_type": "single-hop",
+            },
+            "query_raw": {
+                "question_id": question_id,
+                "question": item.get("query", ""),
+                "gold_answer": answer_text,
+                "gold_doc_ids": gold_doc_ids,
+                "source_dataset": "ms_marco",
+                "question_type": "single-hop",
+            },
+            "docs": docs,
+            "docs_raw": docs_raw,
+        }
+
+    return None
 
 
 def extract_hotpotqa_candidate(
@@ -516,36 +630,34 @@ def main():
     print(f"    - 問題: {target_query['question'][:50]}...")
     print(f"    - 黃金文檔數: {len(old_gold_doc_ids)}")
 
-    # 載入原始資料
-    print(f"\n[2/5] 載入 {source_dataset} 原始資料...")
-    if source_dataset == "drcd":
-        raw_data = load_json(RAW_DIR / "drcd.json")
-    elif source_dataset == "squad":
-        raw_data = load_json(RAW_DIR / "squad.json")
-    elif source_dataset == "hotpotqa":
-        raw_data = load_json(RAW_DIR / "hotpotqa.json")
-    elif source_dataset == "2wiki":
-        raw_data = load_json(RAW_DIR / "2wiki.json")
-    else:
+    # --- 載入原始資料 ---
+    print(f"\n[2/6] 載入 {source_dataset} 原始資料...")
+    raw_file_map = {
+        "drcd": "drcd.json",
+        "squad_v2": "squad_v2.json",
+        "ms_marco": "ms_marco.json",
+        "hotpotqa": "hotpotqa.json",
+        "2wiki": "2wiki.json",
+    }
+    if source_dataset not in raw_file_map:
         print(f"錯誤: 不支援的資料集 {source_dataset}")
         sys.exit(1)
+    raw_data = load_json(RAW_DIR / raw_file_map[source_dataset])
 
     # 取得已使用的 contexts 與 question_ids
     used_contexts = get_used_contexts(queries, corpus)
     used_question_ids = get_used_question_ids(queries)
 
-    # 提取新的 QA
+    # --- 提取新的 QA ---
     print(f"\n[3/6] 從 {source_dataset} 提取新問題...")
-    if source_dataset == "drcd":
-        new_data = extract_drcd_candidate(raw_data, used_contexts, used_question_ids)
-    elif source_dataset == "squad":
-        new_data = extract_squad_candidate(raw_data, used_contexts, used_question_ids)
-    elif source_dataset == "hotpotqa":
-        new_data = extract_hotpotqa_candidate(
-            raw_data, used_contexts, used_question_ids
-        )
-    elif source_dataset == "2wiki":
-        new_data = extract_2wiki_candidate(raw_data, used_contexts, used_question_ids)
+    extract_fn_map = {
+        "drcd": extract_drcd_candidate,
+        "squad_v2": extract_squad_v2_candidate,
+        "ms_marco": extract_ms_marco_candidate,
+        "hotpotqa": extract_hotpotqa_candidate,
+        "2wiki": extract_2wiki_candidate,
+    }
+    new_data = extract_fn_map[source_dataset](raw_data, used_contexts, used_question_ids)
 
     if new_data is None:
         print("錯誤: 找不到可用的替換問題")
@@ -588,7 +700,10 @@ def main():
 
     # 對於 single-hop，只移除 gold docs
     # 對於 multi-hop，移除同一個問題的所有相關文檔
-    if source_dataset in ["hotpotqa", "2wiki"]:
+    # 含 hard negatives 的資料集 (multi-hop + ms_marco)
+    datasets_with_hard_negs = ["hotpotqa", "2wiki", "ms_marco"]
+
+    if source_dataset in datasets_with_hard_negs:
         # 找出舊問題的所有相關文檔 (根據 original_id 前綴)
         old_question_prefix = None
         for doc in corpus:
@@ -642,7 +757,7 @@ def main():
     print(f"  - 舊問題 ID: {target_question_id}")
     print(f"  - 新問題 ID: {new_query['question_id']}")
     print(
-        f"  - 移除文檔數: {len(old_gold_doc_ids) if source_dataset in ['drcd', 'squad'] else '多篇 (含 hard negatives)'}"
+        f"  - 移除文檔數: {len(old_gold_doc_ids) if source_dataset in ['drcd', 'squad_v2'] else '多篇 (含 hard negatives)'}"
     )
     print(f"  - 新增文檔數: {len(new_docs)}")
     print(f"  - 目前 corpus 總數: {len(corpus)}")
