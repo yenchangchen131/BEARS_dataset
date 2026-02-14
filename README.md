@@ -25,7 +25,7 @@
 
 ## 🎯 專案概述
 
-本計畫旨在建立一個 **micro-scale** 的繁體中文 RAG 評測基準。與大規模評測集不同，BEARS 以 **60 題 QA** + **600 篇文檔** 的精簡配置，讓開發者能以最低成本快速檢驗 RAG pipeline 的核心能力：
+本計畫旨在建立一個 **micro-scale** 的繁體中文 RAG 評測基準。與大規模評測集不同，BEARS 以 **100 題 QA** + **5000 篇文檔** 的精簡配置，讓開發者能以最低成本快速檢驗 RAG pipeline 的核心能力：
 
 - **檢索精確度**：能否在大量干擾文檔中找到正確段落？
 - **跨文檔推理**：能否連結多篇文檔進行多跳推理？
@@ -36,14 +36,16 @@
 
 ## 📊 資料集組成
 
-目標總題數為 **60 題**，依據難度與推理類型進行配比：
+目標總題數為 **100 題**，依據難度與推理類型進行配比：
 
-| 資料集來源                | 原始語言 | 推理類型          | 採樣數量        | 測試重點                                 |
-| ------------------------- | -------- | ----------------- | --------------- | ---------------------------------------- |
-| **DRCD**            | 繁體中文 | 單跳 (Single-hop) | 20 題           | 原生繁中基準，無翻譯誤差                 |
-| **HotpotQA**        | 英文     | 多跳 (Multi-hop)  | 20 題           | 跨文檔推理 + 困難負樣本 (Hard Negatives) |
-| **2WikiMultiHopQA** | 英文     | 多跳 (Multi-hop)  | 20 題           | 多實體 (Entity) 邏輯關聯                 |
-| **總計**            | —       | —                | **60 題** | 單跳 20 題 (33%) / 多跳 40 題 (67%)      |
+| 資料集來源                | 原始語言 | 推理類型          | 採樣數量         | 測試重點                                    |
+| ------------------------- | -------- | ----------------- | ---------------- | ------------------------------------------- |
+| **DRCD**            | 繁體中文 | 單跳 (Single-hop) | 20 題            | 原生繁中基準，無翻譯誤差                    |
+| **SQuAD v2**        | 英文     | 單跳 (Single-hop) | 20 題            | 大規模閱讀理解，含不可回答問題過濾          |
+| **MS MARCO v2.1**   | 英文     | 單跳 (Single-hop) | 20 題            | 真實搜尋場景，含困難負樣本 (Hard Negatives) |
+| **HotpotQA**        | 英文     | 多跳 (Multi-hop)  | 20 題            | 跨文檔推理 + 困難負樣本 (Hard Negatives)    |
+| **2WikiMultiHopQA** | 英文     | 多跳 (Multi-hop)  | 20 題            | 多實體 (Entity) 邏輯關聯                    |
+| **總計**            | —       | —                | **100 題** | 單跳 60 題 (60%) / 多跳 40 題 (40%)         |
 
 ---
 
@@ -51,12 +53,12 @@
 
 採用 **Global Pool (混合文檔池)** 模式，所有 Query 共享同一個檢索庫，模擬真實知識庫環境。
 
-| 類別                                    | 預估數量         | 說明                                                       |
-| --------------------------------------- | ---------------- | ---------------------------------------------------------- |
-| **Gold Contexts** (正解文檔)      | ~60–80 篇       | 每道 QA 對應的正確文檔（多跳問題通常對應 ≥2 篇）          |
-| **Hard Negatives** (困難負樣本)   | ~40–60 篇       | 來自 HotpotQA / 2Wiki 的官方干擾項，與問題有高度關鍵字重疊 |
-| **Random Negatives** (隨機負樣本) | ~460–500 篇     | 從 DRCD 隨機抽取，大幅增加背景雜訊 (Needle-in-a-Haystack)  |
-| **總計**                          | **600 篇** | 所有文檔混合並建立統一索引                                 |
+| 類別                                    | 預估數量          | 說明                                                                  |
+| --------------------------------------- | ----------------- | --------------------------------------------------------------------- |
+| **Gold Contexts** (正解文檔)      | ~100–140 篇      | 每道 QA 對應的正確文檔（多跳問題通常對應 ≥2 篇）                     |
+| **Hard Negatives** (困難負樣本)   | ~200–400 篇      | 來自 MS MARCO / HotpotQA / 2Wiki 的官方干擾項，與問題有高度關鍵字重疊 |
+| **Random Negatives** (隨機負樣本) | ~4500+ 篇         | 從 DRCD、SQuAD v2、MS MARCO 未使用段落隨機抽取，增加背景雜訊          |
+| **總計**                          | **5000 篇** | 所有文檔混合並建立統一索引                                            |
 
 ---
 
@@ -112,6 +114,8 @@ BEARS_dataset/
 └── data/                       # (gitignored) 資料儲存 (不納入版控)
     ├── raw/                    # 原始下載資料
     │   ├── drcd.json
+    │   ├── squad_v2.json
+    │   ├── ms_marco.json
     │   ├── hotpotqa.json
     │   └── 2wiki.json
     └── processed/              # 處理後的最終資料
@@ -148,7 +152,7 @@ echo "OPENAI_API_KEY=your-api-key-here" > .env
 ### 一鍵生成資料集
 
 ```bash
-# Step 1: 下載原始資料集 (DRCD, HotpotQA, 2WikiMultiHopQA)
+# Step 1: 下載原始資料集 (DRCD, SQuAD v2, MS MARCO, HotpotQA, 2WikiMultiHopQA)
 uv run src/data_download.py
 
 # Step 2: 採樣與組裝文檔池 (產出 queries_raw.json + corpus_raw.json)
@@ -176,8 +180,8 @@ uv run src/verify_data.py
 │  │              │    │               │    │                      │  │
 │  │ data_download │──▶│ process_data  │──▶│   translate_data     │  │
 │  │              │    │               │    │                      │  │
-│  │ HuggingFace  │    │ 採樣 60 QA    │    │ GPT-4.1 翻譯         │  │
-│  │ → data/raw/  │    │ 組裝 600 docs │    │ → queries.json       │  │
+│  │ HuggingFace  │    │ 採樣 100 QA   │    │ GPT-4.1 翻譯         │  │
+│  │ → data/raw/  │    │ 組裝 5000 docs│    │ → queries.json       │  │
 │  │              │    │ → *_raw.json  │    │ → corpus.json        │  │
 │  └──────────────┘    └───────────────┘    └──────────────────────┘  │
 │                                                                     │
@@ -195,11 +199,13 @@ uv run src/verify_data.py
 
 ### `src/data_download.py` — 資料下載
 
-從 HuggingFace Hub 下載三個原始資料集，並強制轉存為標準 JSON Array 格式。
+從 HuggingFace Hub 下載五個原始資料集，並強制轉存為標準 JSON Array 格式。
 
 | 資料集          | HuggingFace ID                 | Config         | Split          |
 | --------------- | ------------------------------ | -------------- | -------------- |
 | DRCD            | `voidful/drcd`               | —             | `test`       |
+| SQuAD v2        | `rajpurkar/squad_v2`         | —             | `validation` |
+| MS MARCO v2.1   | `microsoft/ms_marco`         | `v2.1`       | `validation` |
 | HotpotQA        | `hotpotqa/hotpot_qa`         | `distractor` | `validation` |
 | 2WikiMultiHopQA | `framolfese/2WikiMultihopQA` | —             | `validation` |
 
@@ -207,6 +213,7 @@ uv run src/verify_data.py
 
 - 若檔案已存在則自動跳過，避免重複下載
 - 所有中文字元保持原樣（`ensure_ascii=False`）
+- 使用 `tqdm` 顯示轉存進度
 
 ---
 
@@ -217,15 +224,17 @@ uv run src/verify_data.py
 **採樣配置**：
 
 - DRCD: 20 題 (單跳)
+- SQuAD v2: 20 題 (單跳，過濾不可回答問題)
+- MS MARCO v2.1: 20 題 (單跳，含困難負樣本)
 - HotpotQA: 20 題 (多跳)
 - 2WikiMultiHopQA: 20 題 (多跳)
-- 文檔池總量: 600 篇
+- 文檔池總量: 5000 篇
 
 **處理邏輯**：
 
 1. 各資料集獨立處理，提取 Gold Contexts 與 Hard Negatives
 2. 使用 UUID v5 為每篇文檔與每道問題生成確定性 ID
-3. 從未使用的 DRCD 段落補充 Random Negatives 至目標數量
+3. 從未使用的 DRCD、SQuAD v2、MS MARCO 段落補充 Random Negatives 至目標數量
 4. 隨機種子固定為 `42`，確保可重現性
 
 **輸出**：`queries_raw.json` + `corpus_raw.json`
@@ -234,7 +243,7 @@ uv run src/verify_data.py
 
 ### `src/translate_data.py` — 多執行緒翻譯
 
-使用 OpenAI GPT-4.1 將英文資料翻譯為台灣繁體中文，支援多執行緒並行處理。
+使用 OpenAI GPT-4.1 將五個資料集的英文資料翻譯為台灣繁體中文，DRCD 資料 (原生繁中) 自動跳過。支援多執行緒並行處理。
 
 **配置**：
 
@@ -246,9 +255,10 @@ uv run src/verify_data.py
 **翻譯規則**：
 
 - DRCD 資料（原生繁中）自動跳過，不進行翻譯
-- 人名、地名等專有名詞使用台灣常見翻譯，並括號標註原文
+- 人名、地名、影視作品名等專有名詞使用台灣常見翻譯，並括號標註原文
 - 僅翻譯，嚴禁回答問題內容
 - 保留數字與日期原始格式
+- 執行前顯示翻譯統計（需翻譯 vs 跳過的數量）
 
 **輸出**：`queries.json` + `corpus.json`
 
@@ -267,27 +277,29 @@ uv run src/replace_question.py e7124c20-75c2-5d99-9acf-d2cba40228fa
 
 **功能**：
 
+- 支援全部 5 個資料集 (DRCD, SQuAD v2, MS MARCO, HotpotQA, 2Wiki)
 - 根據 `question_id` 定位目標問題
 - 從同一來源資料集中抽取未使用的替換候選
 - 對於非 DRCD 資料集，自動呼叫 GPT-4o-mini 進行翻譯
-- 對於多跳問題，連同 Hard Negatives 一併替換
+- 對於多跳問題與 MS MARCO，連同 Hard Negatives 一併替換
 - 同步更新 `queries.json`、`corpus.json`、`queries_raw.json`、`corpus_raw.json`
 
 ---
 
 ### `src/verify_data.py` — 資料驗證工具
 
-全面驗證處理後的資料是否符合規格，包含以下檢查項目：
+全面驗證處理後的資料是否符合規格。對 Raw 組與 Processed 組各自獨立執行驗證（需該組兩個檔案皆存在）。
 
-| 驗證項目         | 說明                                      |
-| ---------------- | ----------------------------------------- |
-| 檔案存在性       | 確認四個 JSON 檔案皆存在且可讀取          |
-| 資料數量         | Queries = 60 題，Corpus = 600 篇          |
-| 來源分佈         | DRCD / HotpotQA / 2Wiki 各 20 題          |
-| ID 唯一性        | 檢查 `question_id` 與 `doc_id` 無重複 |
-| 一致性           | 所有 `gold_doc_ids` 皆存在於 Corpus 中  |
-| 語言檢查         | 非 DRCD 資料是否皆已翻譯為中文            |
-| Raw vs Processed | 兩組資料的數量與 ID 集合是否一致          |
+| 驗證項目         | 說明                                                   |
+| ---------------- | ------------------------------------------------------ |
+| 檔案存在性       | 確認四個 JSON 檔案皆存在且可讀取                       |
+| 資料數量         | Queries = 100 題，Corpus = 5000 篇                     |
+| 來源分佈         | DRCD / SQuAD v2 / MS MARCO / HotpotQA / 2Wiki 各 20 題 |
+| 欄位完整性與型別 | 驗證所有必要欄位存在且型別正確                         |
+| 資料一致性       | 所有 `gold_doc_ids` 皆存在於 Corpus 中               |
+| 重複性檢查       | 檢查 `question_id` 與 `doc_id` 無重複              |
+| 語言檢查         | 非 DRCD 資料是否皆已翻譯為中文（僅 Processed 組）      |
+| Raw vs Processed | 兩組資料的數量與 ID 集合是否一致                       |
 
 ```bash
 uv run src/verify_data.py
@@ -322,24 +334,8 @@ OPENAI_API_KEY=sk-your-api-key-here
 
 ---
 
-## 📏 評估指標
-
-本資料集設計搭配以下評估方式使用：
-
-### 檢索階段 (Retrieval)
-
-- **Hit Rate (Recall@K)**：設定 `K = 5`，檢查 `gold_doc_ids` 是否出現在檢索結果的前 K 名中
-- 多跳問題建議採用 **嚴格模式 (Strict)**：必須找齊所有相關文檔才算得分
-
-### 生成階段 (Generation)
-
-- **LLM-as-a-Judge**：放棄傳統 EM / F1 Score（翻譯會導致用詞改變），改用 LLM 判斷「模型回答」與「標準答案」的語意一致性
-- 評分方式：**Pass** (通過) / **Fail** (失敗)
-
----
-
 ## 📄 授權條款
 
 本專案的程式碼以 MIT License 發布。
 
-> **注意**：本資料集中使用的原始數據來自 DRCD、HotpotQA 和 2WikiMultiHopQA，各資料集有其各自的授權條款，使用時請遵循對應的原始授權規定。
+> **注意**：本資料集中使用的原始數據來自 DRCD、SQuAD v2、MS MARCO、HotpotQA 和 2WikiMultiHopQA，各資料集有其各自的授權條款，使用時請遵循對應的原始授權規定。

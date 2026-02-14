@@ -1,9 +1,11 @@
 """
 翻譯處理腳本 (多執行緒並行版)
-使用 GPT-4.1
+使用 GPT-4.1 將五個資料集 (DRCD, SQuAD v2, MS MARCO, HotpotQA, 2WikiMultiHopQA)
+的英文資料翻譯為台灣繁體中文。DRCD 資料 (原生繁中) 自動跳過。
+
 輸入：
-- data/processed/queries_raw.json
-- data/processed/corpus_raw.json
+- data/processed/queries_raw.json (100 筆 QA)
+- data/processed/corpus_raw.json (5000 篇文檔)
 
 輸出：
 - data/processed/queries.json
@@ -58,7 +60,7 @@ def translate_text(text: str) -> str:
 
 翻譯要求：
 1. 保持原文的語意和語氣(如果是問句就保持問句、直述句就保持直述句)，不要自行修正原文的語詞、句型。
-2. 人名、地名等專有名詞使用台灣常見的翻譯方式，然後用括號標註原文
+2. 人名、地名、影視作品名等專有名詞使用台灣常見的翻譯方式，然後用括號標註原文
 3. 數字、日期格式保持原樣
 4. 如果原文已經是中文，直接返回原文
 5. 只返回翻譯結果，不要添加任何解釋或說明
@@ -151,6 +153,15 @@ def main():
 
     print(f"  - 問答數量: {len(queries_raw)}")
     print(f"  - 文檔數量: {len(corpus_raw)}")
+
+    # 統計各來源數量
+    from collections import Counter
+    q_sources = Counter(q.get("source_dataset", "") for q in queries_raw)
+    c_sources = Counter(d.get("original_source", "") for d in corpus_raw)
+    q_skip = q_sources.get("drcd", 0)
+    c_skip = c_sources.get("drcd", 0)
+    print(f"  - 問答需翻譯: {len(queries_raw) - q_skip} 題 (跳過 DRCD {q_skip} 題)")
+    print(f"  - 文檔需翻譯: {len(corpus_raw) - c_skip} 篇 (跳過 DRCD {c_skip} 篇)")
 
     # 翻譯問答
     print("\n[翻譯問答資料]")
